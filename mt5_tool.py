@@ -1,4 +1,4 @@
-__version__ = "0.5.3"
+__version__ = "0.5.9"
 
 import MetaTrader5 as mt5
 import json
@@ -359,6 +359,25 @@ class _DaemonHandler(http.server.BaseHTTPRequestHandler):
                         result = {"error": "parametro symbol mancante"}
                     else:
                         result = get_symbol_info(terminal_path, symbol, already_connected=True)
+                elif function == "get_all_positions":
+                    result = {}
+                    all_terminals = discover_terminals()
+                    _daemon_terminal_paths.update(all_terminals)
+                    for t_name, t_path in all_terminals.items():
+                        try:
+                            _ensure_terminal(t_path)
+                            positions = get_open_positions(t_path, already_connected=True)
+                            acc = mt5.account_info()
+                            result[t_name] = {
+                                "positions": positions,
+                                "account": {
+                                    "balance": round(acc.balance, 2),
+                                    "equity": round(acc.equity, 2),
+                                    "profit": round(acc.profit, 2),
+                                } if acc else None,
+                            }
+                        except Exception as e:
+                            result[t_name] = {"error": str(e)}
                 else:
                     result = {"error": "funzione non riconosciuta"}
 
