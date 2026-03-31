@@ -1,3 +1,5 @@
+__version__ = "0.5.3"
+
 import MetaTrader5 as mt5
 import json
 import argparse
