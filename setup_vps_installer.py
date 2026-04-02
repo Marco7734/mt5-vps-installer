@@ -129,12 +129,9 @@ def _ensure_openssh_running():
     run('sc config ssh-agent start= auto')
     run("net start ssh-agent")
 
-    log("Apertura porta 22 nel firewall...")
-    run(
-        'netsh advfirewall firewall add rule name="OpenSSH" '
-        'dir=in action=allow protocol=TCP localport=22'
-    )
-    ok("SSH avviato e porta 22 aperta.")
+    log("Rimozione regole SSH esistenti...")
+    run('netsh advfirewall firewall delete rule name="OpenSSH"')
+    ok("SSH avviato. Porta 22 bloccata — aggiungi il tuo IP dalla sezione Sicurezza SSH.")
 
 # ── Step 2: Python ────────────────────────────────────────────────────────────
 
@@ -241,6 +238,92 @@ def test_setup():
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+# ── Whitelist SSH ─────────────────────────────────────────────────────────────
+
+def _get_whitelisted_ips():
+    """Legge gli IP attualmente autorizzati nella regola firewall OpenSSH."""
+    out, _, rc = run(
+        'powershell -Command "(Get-NetFirewallRule -DisplayName \'OpenSSH\' '
+        '| Get-NetFirewallAddressFilter).RemoteAddress"'
+    )
+    if rc != 0 or not out:
+        return []
+    return [ip.strip() for ip in out.splitlines() if ip.strip()]
+
+
+def _add_ip_to_whitelist(ip):
+    """Aggiunge un IP alla whitelist SSH, mantenendo quelli già presenti."""
+    current = _get_whitelisted_ips()
+    # Ignora "Any" e IP già presenti
+    existing = [x for x in current if x != "Any" and x != ip]
+    new_list = existing + [ip]
+    combined = ",".join(new_list)
+
+    _, err_msg, rc = run(
+        f'powershell -Command "Set-NetFirewallRule -DisplayName \'OpenSSH\' -RemoteAddress \'{combined}\'"'
+    )
+    if rc != 0:
+        # Regola non esiste ancora — creala
+        _, err_msg, rc = run(
+            f'powershell -Command "New-NetFirewallRule -DisplayName \'OpenSSH\' '
+            f'-Direction Inbound -Protocol TCP -LocalPort 22 '
+            f'-RemoteAddress \'{combined}\' -Action Allow"'
+        )
+    return rc == 0, err_msg
+
+
+def _is_valid_ip(ip):
+    import re
+    pattern = r"^(\d{1,3}\.){3}\d{1,3}$"
+    if not re.match(pattern, ip):
+        return False
+    return all(0 <= int(part) <= 255 for part in ip.split("."))
+
+
+def manage_whitelist():
+    print("\n" + "=" * 50, flush=True)
+    print("  SICUREZZA SSH — Gestione accessi", flush=True)
+    print("=" * 50 + "\n", flush=True)
+
+    current_ips = _get_whitelisted_ips()
+    print("  Gli indirizzi IP che possono comunicare", flush=True)
+    print("  con la VPS sono i seguenti:", flush=True)
+    if current_ips and current_ips != ["Any"]:
+        for ip in current_ips:
+            print(f"    → {ip}", flush=True)
+    elif current_ips == ["Any"]:
+        print("    → Tutti (nessuna restrizione)", flush=True)
+    else:
+        print("    → Nessuno (SSH bloccato)", flush=True)
+
+    print(flush=True)
+    ip = input("  Inserisci IP da autorizzare (INVIO per annullare): ").strip()
+    if not ip:
+        log("Operazione annullata.")
+        input("\nPremi INVIO per tornare al menu...")
+        return
+
+    if not _is_valid_ip(ip):
+        err(f"'{ip}' non e' un indirizzo IP valido.")
+        input("\nPremi INVIO per tornare al menu...")
+        return
+
+    log(f"Aggiornamento regola firewall per IP: {ip} ...")
+    success, err_msg = _add_ip_to_whitelist(ip)
+    if success:
+        ok(f"IP {ip} aggiunto.")
+    else:
+        err(f"Errore: {err_msg}")
+        input("\nPremi INVIO per tornare al menu...")
+        return
+
+    print(flush=True)
+    print("  IMPORTANTE: se il tuo IP cambia, riesegui questa opzione.", flush=True)
+    input("\nPremi INVIO per tornare al menu...")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
 def main():
     print("\n" + "=" * 50, flush=True)
     print("  mt5-remote-reader-mcp — Setup VPS", flush=True)
@@ -251,6 +334,32 @@ def main():
         err("Tasto destro sull'exe → 'Esegui come amministratore'")
         input("\nPremi INVIO per uscire...")
         sys.exit(1)
+
+    while True:
+        print("\n" + "=" * 50, flush=True)
+        print("  mt5-remote-reader-mcp — VPS Manager", flush=True)
+        print("=" * 50, flush=True)
+        print(flush=True)
+        print("  1. Setup completo VPS (prima installazione)", flush=True)
+        print("  2. Gestisci whitelist IP per SSH", flush=True)
+        print("  0. Esci", flush=True)
+        print(flush=True)
+        scelta = input("  Scegli un'opzione: ").strip()
+
+        if scelta == "0":
+            break
+        elif scelta == "2":
+            manage_whitelist()
+            continue
+        elif scelta != "1":
+            err("Opzione non valida.")
+            continue
+
+        # Opzione 1: setup completo
+        break
+
+    if scelta != "1":
+        sys.exit(0)
 
     steps = [
         install_openssh,
@@ -312,7 +421,45 @@ def main():
     print(flush=True)
     print("  ────────────────────────────────────────────", flush=True)
     print(flush=True)
-    input("Premi INVIO per uscire...")
+
+    # Sezione whitelist SSH
+    while True:
+        print("  ── SICUREZZA SSH ───────────────────────────", flush=True)
+        current_ips = _get_whitelisted_ips()
+        print("  Gli indirizzi IP che possono comunicare", flush=True)
+        print("  con la VPS sono i seguenti:", flush=True)
+        if current_ips and current_ips != ["Any"]:
+            for ip in current_ips:
+                print(f"    → {ip}", flush=True)
+        elif current_ips == ["Any"]:
+            print("    → Tutti (nessuna restrizione)", flush=True)
+        else:
+            print("    → Nessuno (SSH bloccato)", flush=True)
+        print(flush=True)
+        print("  [W] Aggiungi un nuovo indirizzo IP", flush=True)
+        print("  [INVIO] Tutto ok! Esci", flush=True)
+        print(flush=True)
+        scelta = input("  Scelta: ").strip().upper()
+        if scelta == "W":
+            ip = input("\n  Inserisci IP da autorizzare: ").strip()
+            if _is_valid_ip(ip):
+                success, err_msg = _add_ip_to_whitelist(ip)
+                if success:
+                    ok(f"IP {ip} aggiunto.")
+            else:
+                err(f"'{ip}' non e' un indirizzo IP valido.")
+            print(flush=True)
+        else:
+            break
+
+    print("  ────────────────────────────────────────────", flush=True)
+    print(flush=True)
+    print("  Puoi chiudere questa finestra.", flush=True)
+    print("  OpenSSH e il daemon MT5 girano in background", flush=True)
+    print("  come servizi Windows — non dipendono da questa", flush=True)
+    print("  finestra.", flush=True)
+    print(flush=True)
+    input("  Premi INVIO per uscire...")
 
 
 if __name__ == "__main__":
