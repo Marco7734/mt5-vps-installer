@@ -1,0 +1,54 @@
+name: Build MT5RemoteReader Installer
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path setup_vps_installer.py -Pattern "__version__").Line.Split('"')[1]
+          echo "VERSION=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build exe with PyInstaller
+        run: |
+          pyinstaller --onefile --uac-admin --console `
+            --add-data "mt5_tool.py;." `
+            --name MT5RemoteReader `
+            setup_vps_installer.py
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer with Inno Setup
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=$version installer.iss
+
+      - name: Upload installer to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: v${{ steps.version.outputs.VERSION }}
+          files: Output/MT5RemoteReader_Setup_${{ steps.version.outputs.VERSION }}.exe
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
