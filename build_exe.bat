@@ -83,6 +83,15 @@ REM -----------------------------------------------
 echo.
 echo [4/4] Compilazione exe...
 
+REM Legge la versione da setup_vps_installer.py automaticamente
+for /f "delims=" %%v in ('powershell -Command "(Select-String -Path setup_vps_installer.py -Pattern '__version__').Line.Split(chr(34))[1]"') do set VERSION=%%v
+if "%VERSION%"=="" (
+    echo  ERRORE: versione non trovata in setup_vps_installer.py
+    pause
+    exit /b 1
+)
+echo  Versione rilevata: %VERSION%
+
 set "ICON_FLAG="
 if exist assets\mt5_icon.ico set "ICON_FLAG=--icon assets\mt5_icon.ico"
 
@@ -97,14 +106,14 @@ echo.
 
 "%PYTHON_CMD%" -m PyInstaller --onefile --uac-admin --console ^
   --add-data "mt5_tool.py;." ^
-  --name setup_mt5_vps_0.6.1 ^
+  --name setup_mt5_vps_%VERSION% ^
   %ICON_FLAG% ^
   setup_vps_installer.py
 
 echo.
-if exist dist\setup_mt5_vps_0.6.1.exe (
+if exist dist\setup_mt5_vps_%VERSION%.exe (
     echo ============================================
-    echo  BUILD COMPLETATA: dist\setup_mt5_vps_0.6.1.exe
+    echo  BUILD COMPLETATA: dist\setup_mt5_vps_%VERSION%.exe
     echo ============================================
 ) else (
     echo ============================================
